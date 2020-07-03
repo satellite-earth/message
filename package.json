@@ -1,0 +1,17 @@
+{
+  "name": "@satellite-earth/message",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "@satellite-earth/utils": "^1.0.0"
+  },
+  "author": {
+    "name": "Stuart Bowman",
+    "email": "sbowman@satellite.earth"
+  },
+  "license": "ISC"
+}
