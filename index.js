@@ -1,4 +1,4 @@
-const utils = require('@satellite-earth/dev-utils');
+const utils = require('@satellite-earth/utils');
 
 class Message {
 
