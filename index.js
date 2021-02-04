@@ -1,5 +1,6 @@
 const utils = require('@satellite-earth/utils');
 
+
 class Message {
 
 	constructor (data) {
@@ -47,97 +48,98 @@ class Message {
 
 	// Expects Earth API instance allowing
 	// user to sign data in the browser
-	async sign (earth, domain = []) {
+	async sign (earth, domain = [], options = {}) {
 
 		if (!earth) {
 			throw Error('Missing required Earth API instance');
 		}
 
-		try {
-			const { _params_ } = await earth.signData(this._signed_, domain);
-			this._params_ = { ...this._params_, ..._params_ };
-			this.verified = true;
-		} catch (err) {
-			throw Error(err);
-		}
+		const { _params_ } = await earth.signData(this._signed_, domain, options);
+		this._params_ = { ...this._params_, ..._params_ };
 
 		return this;
 	};
 
-	// Look at the blockchain to see if the alias linked to the
-	// address which signed this data matches the claimed alias
+	// Verify authorship with a remote nameserver or Ethereum provider
 	async verify (earth, domain = []) {
 
-		if (!earth) { // Earth API is needed for interfacing with contract
-			throw Error(`Must provide Earth API instance`);
+		if (!earth) {
+			throw Error('Must provide Earth API instance');
 		}
 
-		const claimedAlias = this._params_.alias;
-		let authorship;
+		if (!this._signed_ || this.keys.length === 0) {
+			throw Error('Cannot verify empty message');
+		}
 
 		if (!this.signature) {
 			throw Error('Missing required \'sig\' param');
 		}
 
-		try {
-			authorship = await earth.verifyData(this, domain);
-		} catch (err) {
-			console.log(err);
-			throw Error('Failed to get alias');
+		const author = await earth.verifyData(this, domain);
+		return this.authorize(author);
+	}
+
+	// Verify authorship with local directory or namespace instance
+	verifySync (earth, domain = []) {
+
+		if (!earth) {
+			throw Error('Must provide Earth API instance');
 		}
 
-		// If message already claims an alias author, throw
-		// an error if the verified alias doesn't match. If
-		// there is no claimed author just save the result.
-		if (claimedAlias && claimedAlias !== authorship.alias) {
-			throw Error('Alias linked to address does not match alias in _params_');
-		} else {
-			this._params_.alias = authorship.alias;
+		if (!this._signed_ || this.keys.length === 0) {
+			throw Error('Cannot verify empty message');
+		}
+
+		if (!this.signature) {
+			throw Error('Missing required \'sig\' param');
+		}
+
+		const author = earth.verifyDataSync(this, domain);
+		return this.authorize(author);
+	}
+
+	// Compare existing author alias/address params to given values
+	authorize (author = {}) {
+
+		for (let param of Object.keys(author)) {
+			if (typeof this._params_[param] !== 'undefined') {
+
+				const compare = param === 'address' ? utils.addressEqual : (a, b) => {
+					return a === b;
+				};
+
+				if (!compare(this._params_[param], author[param])) {
+					throw Error(`Claimed ${param} does not match provided value`);
+				}
+
+			} else {
+				this._params_[param] = author[param];
+			}
 		}
 
 		this.verified = true;
 		return this;
 	}
 
-	verifySync (earth, blockNumber, domain = []) {
+	// Compute author address
+	address (domain = []) {
 
-		if (!earth) { // Earth API is needed for interfacing with contract
-			throw Error(`Must provide Earth API instance`);
+		if (typeof this._signed_ === 'undefined' || Object.keys(this._signed_).length === 0) {
+			throw Error('Cannot compute author address of empty message');
 		}
-
-		const claimedAlias = this._params_.alias;
-		let authorship;
 
 		if (!this.signature) {
-			throw Error('Missing required \'sig\' param');
+			throw Error('Cannot compute author address without signature');
 		}
 
-		try {
-
-			authorship = earth.verifyDataSync(this, blockNumber, domain);
-
-		} catch (err) {
-			console.log(err);
-			throw Error('Failed to get alias');
-		}
-
-		// If message already claims an alias author, throw
-		// an error if the verified alias doesn't match. If
-		// there is no claimed author just save the result.
-		if (claimedAlias && claimedAlias !== authorship.alias) {
-			throw Error('Alias linked to address does not match alias in _params_');
-		} else {
-			this._params_.alias = authorship.alias;
-		}
-
-		this.verified = true;
+		this._params_.address = utils.addressData(this._signed_, this.signature, domain);
 		return this;
 	}
 
 	addParams (obj) {
 		const keys = Object.keys(obj);
 		if (keys.indexOf('alias') !== -1 || keys.indexOf('sig') !== -1) {
-			clearSig(); // Unverify if changing sig or alias params
+			this.clearSig(); // Unverify if changing sig or alias params
 		}
 		for (let key of keys) {
 			this._params_[key] = obj[key];
@@ -185,7 +187,7 @@ class Message {
 	get uuid () {
 		
 		if (this.signature) {
-			return utils.getMessageUUID(this);
+			return this.signature.substring(0, 40);
 		} else {
 
 			// The reason to throw an error when trying to get a uuid which
@@ -199,12 +201,41 @@ class Message {
 
 	// Payload as uri component, useful for making signed GET requests
 	get uri () {
-		return utils.encodeMessageURI(this.payload);
+
+		const encoded = [];
+
+		for (let pre of [ '_params_', '_signed_' ]) {
+
+			const values = [];
+
+			for (let k of Object.keys(this[pre]).sort()) {
+				values.push(`${encodeURIComponent(pre + k)}=${encodeURIComponent(this[pre][k])}`);
+			}
+
+			if (values.length > 0) {
+				encoded.push(values.join('&'));
+			}
+		}
+
+		if (encoded.length > 0) {
+			return encoded.join('&');
+		}
+
+		return;
+	}
+
+	get namespace () {
+		return this._params_.namespace;
 	}
 
 	// Utf8 representation of alias linked to signing address
 	get authorAlias () {
-		return this._params_.alias ? utils.hexToUtf8('0x' + this._params_.alias) : undefined;
+
+		if (typeof this._params_.alias === 'undefined') {
+			return;
+		}
+
+		return utils.hexToUtf8('0x' + this._params_.alias);
 	}
 
 	// Ethereum address which signed data
